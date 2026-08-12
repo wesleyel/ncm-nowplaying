@@ -1,0 +1,21 @@
+[package]
+name = "ncm-nowplaying"
+version = "0.1.0"
+edition = "2021"
+description = "Real-time playback position and word-level lyrics from NetEase Cloud Music on macOS, over HTTP and WebSocket"
+license = "MIT"
+repository = "https://github.com/wesleyel/ncm-nowplaying"
+
+[dependencies]
+anyhow = "1"
+axum = { version = "0.8", features = ["ws"] }
+futures-util = "0.3"
+reqwest = { version = "0.12", default-features = false, features = ["json"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "time", "sync", "fs"] }
+tokio-tungstenite = "0.26"
+
+[profile.release]
+lto = true
+strip = true

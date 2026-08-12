@@ -1,0 +1,213 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>ncm-nowplaying overlay</title>
+<style>
+  :root {
+    --font: -apple-system, "PingFang SC", "Helvetica Neue", sans-serif;
+    --active: #fff;
+    --dim: rgba(255, 255, 255, .38);
+    --accent: #ff4f6a;
+    --shadow: 0 2px 10px rgba(0, 0, 0, .75);
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: var(--font);
+    background: transparent;      /* drops straight into an OBS browser source */
+    overflow: hidden;
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-end;
+    padding: 24px 32px;
+  }
+  #meta {
+    font-size: 15px;
+    color: var(--dim);
+    text-shadow: var(--shadow);
+    margin-bottom: 10px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  #meta b { color: var(--active); font-weight: 600; }
+  #meta .paused { color: var(--accent); }
+  #lines { display: flex; flex-direction: column; gap: 6px; }
+  .line {
+    font-size: 30px;
+    font-weight: 600;
+    line-height: 1.35;
+    color: var(--dim);
+    text-shadow: var(--shadow);
+    transition: color .25s ease, opacity .25s ease;
+    opacity: .55;
+  }
+  .line.cur { color: var(--active); opacity: 1; }
+  /* Word-level fill: base colour is dim, a gradient paints the sung part active. */
+  .line.cur.karaoke {
+    background-image: linear-gradient(to right, var(--active) var(--fill, 0%), var(--dim) var(--fill, 0%));
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+  .trans {
+    font-size: 18px;
+    font-weight: 500;
+    color: var(--dim);
+    text-shadow: var(--shadow);
+    margin-top: 2px;
+  }
+  .line.cur + .trans { color: rgba(255, 255, 255, .78); }
+  #offline { color: var(--accent); font-size: 18px; text-shadow: var(--shadow); }
+</style>
+</head>
+<body>
+  <div id="meta"></div>
+  <div id="lines"></div>
+  <div id="offline" hidden>Waiting for NetEase Cloud Music…</div>
+
+<script>
+"use strict";
+
+const metaEl = document.getElementById("meta");
+const linesEl = document.getElementById("lines");
+const offlineEl = document.getElementById("offline");
+
+// The server only pushes on whole-second ticks. Interpolate locally against the wall
+// clock so word-level highlighting does not advance in visible steps.
+let clock = { positionMs: 0, at: performance.now(), playing: false };
+let lyrics = null;
+let renderedKey = "";
+
+function nowMs() {
+  if (!clock.playing) return clock.positionMs;
+  return clock.positionMs + (performance.now() - clock.at);
+}
+
+function setClock(positionMs, playing) {
+  clock = { positionMs: positionMs || 0, at: performance.now(), playing: !!playing };
+}
+
+function applySnapshot(d) {
+  offlineEl.hidden = true;
+  lyrics = d.lyrics && d.lyrics.lines && d.lyrics.lines.length ? d.lyrics : null;
+  setClock(d.positionMs, d.playing);
+
+  if (d.song) {
+    const artists = (d.song.artists || []).join(" / ");
+    metaEl.innerHTML = "<b></b><span></span>";
+    metaEl.querySelector("b").textContent = d.song.name;
+    metaEl.querySelector("span").textContent = artists ? "  —  " + artists : "";
+  } else {
+    metaEl.textContent = "";
+  }
+  renderedKey = "";
+  paint(true);
+}
+
+function lineIndexAt(pos) {
+  if (!lyrics) return -1;
+  const ls = lyrics.lines;
+  let lo = 0, hi = ls.length - 1, found = -1;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    if (ls[mid].time <= pos) { found = mid; lo = mid + 1; } else { hi = mid - 1; }
+  }
+  return found;
+}
+
+// How much of the current line has been sung: yrc uses per-word timings, lrc falls
+// back to a linear sweep across the whole line.
+function fillPercent(line, pos) {
+  if (!line) return 0;
+  if (line.words && line.words.length) {
+    let done = 0, total = 0, cursor = 0;
+    for (const w of line.words) {
+      total += w.text.length;
+      if (pos >= w.time + w.duration) cursor += w.text.length;
+      else if (pos > w.time) cursor += w.text.length * ((pos - w.time) / Math.max(w.duration, 1));
+    }
+    done = cursor;
+    return total ? Math.min(100, (done / total) * 100) : 0;
+  }
+  if (!line.duration) return 0;
+  return Math.max(0, Math.min(100, ((pos - line.time) / line.duration) * 100));
+}
+
+function paint(force) {
+  const pos = nowMs();
+
+  if (!lyrics) {
+    if (force) linesEl.innerHTML = "";
+    return;
+  }
+
+  const idx = lineIndexAt(pos);
+  const window_ = [idx - 1, idx, idx + 1, idx + 2];
+  const key = window_.join(",");
+
+  if (force || key !== renderedKey) {
+    renderedKey = key;
+    linesEl.innerHTML = "";
+    for (const i of window_) {
+      const line = lyrics.lines[i];
+      if (!line) continue;
+      const div = document.createElement("div");
+      div.className = "line" + (i === idx ? " cur" : "") + (line.words && line.words.length ? " karaoke" : "");
+      div.textContent = line.text;
+      div.dataset.i = String(i);
+      linesEl.appendChild(div);
+      if (line.trans) {
+        const t = document.createElement("div");
+        t.className = "trans";
+        t.textContent = line.trans;
+        linesEl.appendChild(t);
+      }
+    }
+  }
+
+  const cur = linesEl.querySelector(".line.cur.karaoke");
+  if (cur) cur.style.setProperty("--fill", fillPercent(lyrics.lines[idx], pos).toFixed(2) + "%");
+}
+
+function loop() { paint(false); requestAnimationFrame(loop); }
+requestAnimationFrame(loop);
+
+function connect() {
+  const ws = new WebSocket(`ws://${location.host}/ws`);
+
+  ws.onmessage = (ev) => {
+    const msg = JSON.parse(ev.data);
+    if (msg.type === "snapshot" || msg.type === "musicchange") {
+      applySnapshot(msg.data);
+    } else if (msg.type === "timechange") {
+      setClock(msg.positionMs, msg.playing);
+      const paused = metaEl.querySelector(".paused");
+      if (!msg.playing && !paused) {
+        const tag = document.createElement("span");
+        tag.className = "paused";
+        tag.textContent = "  ⏸";
+        metaEl.appendChild(tag);
+      } else if (msg.playing && paused) {
+        paused.remove();
+      }
+    } else if (msg.type === "idle") {
+      lyrics = null;
+      metaEl.textContent = "";
+      linesEl.innerHTML = "";
+      offlineEl.hidden = false;
+    }
+  };
+
+  ws.onclose = () => {
+    offlineEl.hidden = false;
+    setTimeout(connect, 1500);
+  };
+  ws.onerror = () => ws.close();
+}
+
+connect();
+</script>
+</body>
+</html>
