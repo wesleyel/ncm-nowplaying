@@ -1,6 +1,6 @@
 [package]
 name = "ncm-nowplaying"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 description = "Real-time playback position and word-level lyrics from NetEase Cloud Music on macOS, over HTTP and WebSocket"
 license = "MIT"
