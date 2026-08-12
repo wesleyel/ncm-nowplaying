@@ -123,10 +123,12 @@ jobs:
           set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          if git diff --quiet -- Formula/ncm-nowplaying.rb; then
+          # Stage first: `git diff` ignores untracked files, so a brand-new
+          # Formula/*.rb would otherwise look "unchanged" and skip the push.
+          git add Formula/ncm-nowplaying.rb
+          if git diff --cached --quiet; then
             echo "formula unchanged, nothing to do"
             exit 0
           fi
-          git add Formula/ncm-nowplaying.rb
           git commit -m "ncm-nowplaying ${{ needs.build.outputs.version }}"
           git push
