@@ -5,6 +5,7 @@
 ## 安装
 
 ```bash
+brew tap wesleyel/tap
 brew install wesleyel/tap/ncm-nowplaying
 ```
 
